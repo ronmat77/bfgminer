@@ -271,6 +271,7 @@ extern char *opt_kernel_path;
 extern int gpur_thr_id;
 extern bool opt_noadl;
 extern bool have_opencl;
+static _clState *clStates[MAX_GPUDEVICES];
 
 
 
@@ -554,6 +555,7 @@ static
 bool _set_intensity(struct cgpu_info * const cgpu, const char * const _val)
 {
 	struct opencl_device_data * const data = cgpu->device_data;
+	data->_init_xintensity = 0;
 	if (!strncasecmp(_val, "d", 1))
 		data->dynamic = true;
 	else
@@ -572,6 +574,36 @@ const char *set_intensity(char *arg)
 {
 	return _set_list(arg, "Invalid value passed to intensity", _set_intensity);
 }
+
+unsigned long xintensity_to_oclthreads(const double xintensity, const cl_uint max_compute_units)
+{
+	return xintensity * max_compute_units * 0x40;
+}
+
+static
+bool _set_xintensity(struct cgpu_info * const cgpu, const char * const _val)
+{
+	struct opencl_device_data * const data = cgpu->device_data;
+	if (!strncasecmp(_val, "d", 1))
+		data->dynamic = true;
+	else
+	{
+		const double v = atof(_val);
+		if (v < 1 || v > 9999)
+			return false;
+		data->dynamic = false;
+		
+		struct thr_info * const thr = cgpu->thr[0];
+		const int thr_id = thr->id;
+		_clState * const clState = clStates[thr_id];
+		
+		data->oclthreads = xintensity_to_oclthreads(v, clState->max_compute_units);
+		data->_init_xintensity = v;
+	}
+	pause_dynamic_threads(cgpu->device_id);
+	return true;
+}
+_SET_INTERFACE(xintensity)
 
 _SET_INT_LIST2(gpu_threads, (v >= 1 && v <= 10), cgpu->threads)
 #endif
@@ -929,7 +961,6 @@ const char *opencl_tui_handle_choice(struct cgpu_info *cgpu, int input)
 
 
 #ifdef HAVE_OPENCL
-static _clState *clStates[MAX_GPUDEVICES];
 
 #define CL_SET_BLKARG(blkvar) status |= clSetKernelArg(*kernel, num++, sizeof(uint), (void *)&blk->blkvar)
 #define CL_SET_ARG(var) status |= clSetKernelArg(*kernel, num++, sizeof(var), (void *)&var)
@@ -1758,6 +1789,7 @@ const char *opencl_cannot_set(struct cgpu_info * const proc, const char * const 
 
 static const struct bfg_set_device_definition opencl_set_device_funcs_probe[] = {
 	{"intensity", opencl_init_intensity},
+	{"xintensity", opencl_init_xintensity},
 	{"kernel", opencl_init_kernel},
 	{"threads", opencl_init_gpu_threads},
 	{"vector", opencl_init_vector},
@@ -1782,6 +1814,7 @@ static const struct bfg_set_device_definition opencl_set_device_funcs_probe[] = 
 
 static const struct bfg_set_device_definition opencl_set_device_funcs[] = {
 	{"intensity", opencl_init_intensity, "Intensity of GPU scanning (d or -10 -> 31)"},
+	{"xintensity", opencl_init_xintensity, "Intensity of GPU scanning (shader-based; 1 to 9999)"},
 	{"kernel", opencl_cannot_set, "Mining kernel code to use"},
 	{"threads", opencl_cannot_set, "Number of threads"},
 	{"vector", opencl_cannot_set, ""},
